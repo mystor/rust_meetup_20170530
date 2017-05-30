@@ -1,0 +1,515 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>Parsing in Rust with `nom`</title>
+
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/black.css">
+
+		<!-- Theme used for syntax highlighting of code -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+        <section data-markdown>
+          ## Parsing in Rust with `nom`
+          #### Michael Layzell
+        </section>
+        <section data-markdown>
+          ## What is a parser?
+
+          note: What is a parser?
+        </section>
+        <section data-markdown>
+          ## Rust has a parser!
+
+          ```rust
+          "10".parse::&lt;i32>() // Ok(10)
+          "32.5".parse::&ltf64>() // Ok(32.5)
+          "cheese".parse::&lt;i32>() // Err(ParseIntError { ... })
+          ```
+
+          What does that look like?
+
+          note: Well, rust has a parser. There's a parse method on `str` which
+          you can call to interpret it as one of the primitive data types, like
+          i32 or f64.
+
+          Let's use that as a starting place.
+        </section>
+        <section data-markdown>
+          Somewhere deep in the standard library...
+          ```rust
+          impl str {
+              fn parse&lt;F>(&self) -> Result&lt;F, F::Err>
+                  where F: FromStr { ... }
+          }
+          ```
+
+          note: This is what that parse method looks like. The basic idea here
+          is that the function can take a string in as an argument, and produces
+          either structured data, or a result.
+        </section>
+        <section data-markdown>
+          ```rust
+          fn parse(&str) -> Result&lt;Thing, Err> { ... }
+          ```
+
+          > "A parser takes a string, and either returns the parsed value, or an
+            error"
+
+          note: If we simplify this down to the minimal definition, this is what
+          it looks like.
+
+          This is a relatively limited parser, however. It cannot handle
+          interesting cases, such as parsing data off of the beginning of a
+          string, and returning the remaining data.
+        </section>
+        <section data-markdown>
+          ## Incremental Parsing?!?
+
+          #### Key-value pairs
+          `key: 10`
+
+          #### Delimited lists
+          "apple, cider", "pear"
+
+          note: This is important for most interesting parser problems. For
+          example, if you have a parser for a word, and a parser for a number,
+          you would want to be able to combine them to get a key-value parser.
+
+          It would really suck if you had to write a brand new parser from
+          scratch for every combination of numbers, and strings.
+
+          In many of these cases we can't do the easy thing and split on a
+          delimiter character either, such as when you want to parse a
+          comma-separated list of strings, which might contain commas.
+        </section>
+        <section data-markdown>
+          ## Ta Da!
+
+          ```rust
+          fn parse(&str) -> Result&lt;(&str, Thing), Err> { ... }
+          ```
+
+          > "A parser takes a string, and either returns the parsed value, and the rest of the string, or an error"
+
+          note: So, we can expand upon the basic parser, and bring it new power!
+        </section>
+        <section data-markdown>
+          # Results in `nom`
+
+          ```rust
+          enum IResult&lt;I, R> { // * Not actually IResult
+              Done(I, R),
+              Error,
+              Incomplete,
+          }
+          ```
+
+          note: But nom does something a little bit different. It was designed
+          to be as flexible and useful in as many situations as possible, so it
+          extracted one of the possible "error" states into a new Result
+          variant.
+
+          nom uses `IResult` which is like result, except that it also has
+          support for an `Incomplete` case. This is because nom was designed to
+          support parsing potentially-incomplete data streams, and needs a way
+          to distinguish between a parsing failure due to incorrectly formatted
+          data, versus a parsing failure due to simply not having received
+          enough data from the stream yet.
+
+          The actual definition of IResult is a bit longer, because nom likes to
+          be super fancy, but we can ignore it.
+        </section>
+        <section data-markdown>
+          ## Example Time!
+
+          #### Use the integer32 playground!
+
+          [https://play.integer32.com](https://play.integer32.com)
+
+          #### Or start your own project!
+
+          ```bash
+          $ cargo new --bin nomnomnom
+          $ cd nomnomnom
+          $ echo 'nom = "3.0"' >> Cargo.toml
+          $ cargo run
+          ```
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+// Generates something like:
+// fn cool_word(i: &[u8]) -> nom::IResult<&[u8], &[u8]> { ... }
+named!(cool_word<&[u8]>, tag!("nom"));
+
+fn main() {
+    println!("{:?}", cool_word(b"nom is awesome"));
+}
+          </script>
+
+          <aside class="notes">
+            Parsers in nom are defined using the `named!` macro, which creates a
+            function. The generated `cool_word` function has the type signature
+            we were talking about before.
+
+            The type in the pointy brackets after the name is the return type.
+            By default, parsers take byte arrays, as they are the most generic
+            data type. The tag!() parser is a simple parser which checks if the input
+            byte array matches the given string, and if it does, consumes it.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+named!(cool_word<&str, &str>, tag!("nom"));
+
+fn main() {
+    println!("{:?}", cool_word("nom is awesome"));
+}
+          </script>
+
+          <aside class="notes">
+            If we wanted to make this same parser operate on strings instead of
+            bytes, we have to specify the input type as well. Fortunately, tag!
+            is polymorphic and understands how to operate on &str as well, so we
+            don't need to change our parser other than that.
+
+            Changing the parser also changes the result type from tag!(), as tag!() always
+            returns a slice of the input.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+named!(cool_word<&str, &str>, tag!("nom"));
+
+named!(many_cool_words <&str, Vec<&str>>,
+    many1!(cool_word));
+
+fn main() {
+    println!("{:?}", many_cool_words("nomnomnomnomnomnom oh yes!"));
+}
+          </script>
+
+          <aside class="notes">
+            Nom also provides a bunch of different combinators. For example,
+            the `many1!` macro takes another parser, and transforms it into a
+            parser which calls that parser repeatedly, creating a vec of all of
+            the successful parses.
+
+            There's also a many0! combinator which acts like many1! but also
+            succeeds if the parser never succeeds, creating an empty Vec.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+named!(many_as <&str, Vec<char>>,
+    many1!(char!('a')));
+
+named!(many_bs <&str, Vec<char>>,
+    many1!(char!('b')));
+
+named!(many_as_or_bs <&str, Vec<char>>,
+      alt!(many_as | many_bs));
+
+fn main() {
+    println!("{:?}", many_as_or_bs("aaaaaaaples"));
+    println!("{:?}", many_as_or_bs("bbbaaaaples"));
+}
+          </script>
+
+          <aside class="notes">
+            Another combinator is alt! parser, which first tries to pass the
+            first argument, and then tries to parse the second one.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+named!(many_as <&str, Vec<char>>,
+    many1!(char!('a')));
+
+named!(many_bs <&str, Vec<char>>,
+    many1!(char!('b')));
+
+named!(as_space_then_bs <&str, (Vec<char>, Vec<char>)>, do_parse!(
+    as_vec: many_as >>
+    char!(' ') >>
+    bs_vec: many_bs >>
+    ((as_vec, bs_vec))));
+
+fn main() {
+    println!("{:?}", as_space_then_bs("aaa bbbbbbbbbb"));
+}
+          </script>
+
+          <aside class="notes">
+            There's also the do_parse! combinator which tries to run a
+            series of parsers, optionally bound to variables, sequentially, and
+            then compute a final value based on the results of the run parsers. If
+            any of the parsers fail the entire parser fails.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+use std::str::FromStr;
+use nom::digit;
+
+named!(simple_i32 <&str, i32>, do_parse!(
+    neg: opt!(char!('-')) >>
+    digs: map_res!(digit, i32::from_str) >>
+    (if neg.is_some() {
+        -digs
+    } else {
+        digs
+    })));
+
+fn main() {
+    println!("{:?}", simple_i32("1023"));
+    println!("{:?}", simple_i32("-55"));
+}
+          </script>
+
+          <aside class="notes">
+            Sometimes you need to perform a simple transformation on parsed
+            data. For example, nom has the `digit` parser, which parses a series
+            of base-10 digits.
+
+            We can use this to grab a string representing a number, and parse it
+            into an integer.
+
+            map_res is a helper combinator which runs a parser, and then runs a
+            function which may return a result, and succeeds the parser if both
+            the parser, and the mapping function, succeed.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+named!(csv_escaped_char<&str, char>, alt!(
+    tag!("\"\"") => { |_| '"' } |
+        none_of!("\"")));
+
+named!(csv_style_str<&str, String>, do_parse!(
+    char!('"') >>
+    chars: many0!(csv_escaped_char) >>
+    char!('"') >>
+    (chars.into_iter().collect())));
+
+fn main() {
+    println!("{:?}", csv_style_str(r#""some string" is cool"#));
+    println!("{:?}", csv_style_str(
+        r#""some string with "" internal quotes!" is also cool"#));
+}
+          </script>
+
+          <aside class="notes">
+            Now we can get into some examples. This first one parses CSV-style
+            strings.
+
+            It uses a few of the different parsers we talked about, We look for
+            the opening quote, then parse a series of characters, handling the
+            escaped double-quote case, followed by the final quote character.
+
+            I should note that this breaks if I write the string literal butting
+            up against the end of the string, but explaining why goes into the
+            weeds a bit. You can think of figuring out how to fix this parser as
+            trivia, or you can bother me and I'll explain it later.
+          </aside>
+        </section>
+        <section>
+          <script type="rust/play">
+#[macro_use]
+extern crate nom;
+
+use nom::{IResult, le_u8, le_u16, le_u32, le_u64};
+
+use std::fs::File;
+use std::io::Read;
+use std::env;
+
+#[derive(Debug)]
+struct ElfHdr {
+    ei_class: u8,
+    ei_data: u8,
+    ei_version: u8,
+    ei_osabi: u8,
+    ei_abiversion: u8,
+    e_type: u16,
+    e_machine: u16,
+    e_version: u32,
+    e_entry: u64,
+    e_phoff: u64,
+    e_shoff: u64,
+    e_flags: u32,
+    e_ehsize: u16,
+    e_phentsize: u16,
+    e_phnum: u16,
+    e_shentsize: u16,
+    e_shnum: u16,
+    e_shstrndx: u16
+}
+
+named!(elf_header <ElfHdr>,
+    do_parse!(
+        tag!("\x7fELF") >>
+        ei_class: le_u8 >>
+        ei_data: le_u8 >> // NOTE: should be 1 - which means little endian
+        ei_version: le_u8 >>
+        ei_osabi: le_u8 >>
+        ei_abiversion: le_u8 >>
+        take!(7) >> // padding
+        e_type: le_u16 >>
+        e_machine: le_u16 >>
+        e_version: le_u32 >>
+        e_entry: le_u64 >>
+        e_phoff: le_u64 >>
+        e_shoff: le_u64 >>
+        e_flags: le_u32 >>
+        e_ehsize: le_u16 >>
+        e_phentsize: le_u16 >>
+        e_phnum: le_u16 >>
+        e_shentsize: le_u16 >>
+        e_shnum: le_u16 >>
+        e_shstrndx: le_u16 >>
+        (ElfHdr {
+            ei_class,
+            ei_data,
+            ei_version,
+            ei_osabi,
+            ei_abiversion,
+            e_type,
+            e_machine,
+            e_version,
+            e_entry,
+            e_phoff,
+            e_shoff,
+            e_flags,
+            e_ehsize,
+            e_phentsize,
+            e_phnum,
+            e_shentsize,
+            e_shnum,
+            e_shstrndx,
+        })
+    ));
+
+fn main() {
+    // The first argument is the name of this executable,
+    // let's open it.
+    let mut f = File::open(
+        env::args().next().unwrap())
+        .unwrap();
+    let mut data = Vec::new();
+    f.read_to_end(&mut data).unwrap();
+
+    // Now parse the elf header of our own executable!
+    if let IResult::Done(_, val) = elf_header(&data) {
+        println!("{:#?}", val);
+    } else {
+        println!("Error!");
+    }
+}
+          </script>
+          <aside class="notes">
+            This is another cool parser. This one shows off how easy it is to
+            parse binary data with nom. This is a ELF entry header parser, which
+            parses the beginning of a valid ELF executable. As the playpen is
+            run on linux, which compiles to ELF binaries, we can actually take a
+            look at the ELF header for the generated executable.
+          </aside>
+        </section>
+
+        <section>
+          <img src="./parsers.png" style="max-height: 640px">
+          <aside class="notes" >
+            There are a lot of different parsers, and there's no way I'm going
+            to go over what each one does. In order to take this screen shot I
+            had to delete 90% of the page, and use the fancy new full webpage
+            screenshot feature, and it's still unreadable.
+          </aside>
+        </section>
+
+        <section data-markdown>
+          ## Get the `nom` docs!
+
+          ```bash
+          $ cargo doc --open
+          ```
+
+          [https://docs.rs/nom/3.0.0/](https://docs.rs/nom/3.0.0/)
+
+          note: So go get the docs! If you set up a local project, you can
+          easily get to them with `cargo doc --open`, or if you've been
+          following along in the playground, they're also avaliable on docs.rs.
+        </section>
+			</div>
+		</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.js"></script>
+
+		<script>
+     let play = document.querySelectorAll("script[type='rust/play']");
+     for (let i = 0; i < play.length; ++i) {
+       let src = play[i].innerHTML;
+       let newPlay = document.createElement("iframe");
+       newPlay.setAttribute("src", "http://play.integer32.com/?code=" +
+                                   encodeURIComponent(src.trim()));
+       newPlay.style.width = "960px";
+       newPlay.style.height = "660px";
+
+       play[i].parentNode.replaceChild(newPlay, play[i]);
+     }
+
+			// More info about config & dependencies:
+			// - https://github.com/hakimel/reveal.js#configuration
+			// - https://github.com/hakimel/reveal.js#dependencies
+			Reveal.initialize({
+        controls: false,
+        progress: true,
+        history: true,
+        center: true,
+        transition: 'slide',
+				dependencies: [
+					{ src: 'plugin/markdown/marked.js' },
+					{ src: 'plugin/markdown/markdown.js' },
+					{ src: 'plugin/notes/notes.js', async: true },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } }
+				]
+			});
+		</script>
+	</body>
+</html>
